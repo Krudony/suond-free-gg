@@ -1,0 +1,719 @@
+import sys
+import base64
+import json
+import requests
+import tempfile
+import os
+import time
+from datetime import datetime
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLineEdit, QPushButton, QLabel, QFileDialog, QMessageBox, QComboBox,
+    QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget,
+    QSplitter, QGroupBox
+)
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
+
+class TextToSpeechApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.api_key = None
+        self.audio_data = None
+        self.current_filename = None
+        self.voice_options = self._get_voice_options()
+        self.speech_history = []  # Store history of generated speech
+        self.initUI()
+
+    def _get_voice_options(self):
+        """Get all available voice options organized by categories"""
+        return {
+            "Male Voices (ผู้ชาย)": {
+                "Charon": "Informative - เสียงให้ข้อมูล",
+                "Kore": "Firm - เสียงมั่นคง", 
+                "Orus": "Firm - เสียงมั่นคง",
+                "Fenrir": "Excitable - เสียงกระตือรือร้น",
+                "Enceladus": "Breathy - เสียงหายใจ",
+                "Algenib": "Gravelly - เสียงแกรง",
+                "Achernar": "Soft - เสียงนุ่ม",
+                "Gacrux": "Mature - เสียงผู้ใหญ่",
+                "Zubenelgenubi": "Casual - เสียงสบายๆ",
+                "Sadaltager": "Knowledgeable - เสียงรู้แจ้ง",
+                "Iapetus": "Clear - เสียงชัด",
+                "Rasalgethi": "Informative - เสียงให้ข้อมูล",
+                "Alnilam": "Firm - เสียงมั่นคง"
+            },
+            "Female Voices (ผู้หญิง)": {
+                "Zephyr": "Bright - เสียงสดใส",
+                "Puck": "Upbeat - เสียงร่าเริง",
+                "Autonoe": "Bright - เสียงสดใส", 
+                "Umbriel": "Easy-going - เสียงสบายๆ",
+                "Erinome": "Clear - เสียงชัด",
+                "Laomedeia": "Upbeat - เสียงร่าเริง",
+                "Schedar": "Even - เสียงสม่ำเสมอ",
+                "Achird": "Friendly - เสียงเป็นมิตร",
+                "Sadachbia": "Lively - เสียงมีชีวิตชีวา",
+                "Aoede": "Breezy - เสียงสดชื่น",
+                "Algieba": "Smooth - เสียงนุ่มนวล",
+                "Leda": "Youthful - เสียงเยาว์วัย",
+                "Callirrhoe": "Easy-going - เสียงสบายๆ",
+                "Despina": "Smooth - เสียงนุ่มนวล",
+                "Pulcherrima": "Forward - เสียงก้าวหน้า",
+                "Vindemiatrix": "Gentle - เสียงอ่อนโยน",
+                "Sulafat": "Warm - เสียงอบอุ่น"
+            }
+        }
+
+    def initUI(self):
+        self.setWindowTitle('AI Studio Thai Text-to-Speech Generator © GTD')
+        self.setMinimumSize(1000, 700)
+
+        # Create central widget and main layout
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QHBoxLayout(central_widget)
+
+        # Create splitter for resizable panels
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(splitter)
+
+        # Left panel - Input and controls
+        left_panel = self._create_input_panel()
+        splitter.addWidget(left_panel)
+
+        # Right panel - History table
+        right_panel = self._create_history_panel()
+        splitter.addWidget(right_panel)
+
+        # Set splitter proportions (60% left, 40% right)
+        splitter.setSizes([600, 400])
+
+        self._applyStyle()
+
+    def _create_input_panel(self):
+        """Create the left panel with input controls"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+
+        # Title
+        title = QLabel("🎤 AI Studio Thai TTS Generator © GTD")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px; color: #0078d4;")
+        layout.addWidget(title)
+
+        # Tab widget for input methods
+        tab_widget = QTabWidget()
+        
+        # Tab 1: File input
+        file_tab = QWidget()
+        file_layout = QVBoxLayout(file_tab)
+        
+        # File selection group
+        file_group = QGroupBox("📁 เลือกไฟล์ข้อความ")
+        file_group_layout = QVBoxLayout(file_group)
+        
+        file_input_layout = QHBoxLayout()
+        self.file_path = QLineEdit()
+        self.file_path.setPlaceholderText("เลือกไฟล์ข้อความ (.txt)...")
+        browse_btn = QPushButton("📂 Browse")
+        preview_btn = QPushButton("👁️ Preview")
+        file_input_layout.addWidget(self.file_path)
+        file_input_layout.addWidget(browse_btn)
+        file_input_layout.addWidget(preview_btn)
+        file_group_layout.addLayout(file_input_layout)
+        
+        file_layout.addWidget(file_group)
+        tab_widget.addTab(file_tab, "📁 ไฟล์")
+
+        # Tab 2: Direct text input
+        text_tab = QWidget()
+        text_layout = QVBoxLayout(text_tab)
+        
+        # Text input group
+        text_group = QGroupBox("✏️ พิมพ์ข้อความโดยตรง")
+        text_group_layout = QVBoxLayout(text_group)
+        
+        self.text_input = QTextEdit()
+        self.text_input.setPlaceholderText("พิมพ์หรือวางข้อความที่ต้องการแปลงเป็นเสียงที่นี่...\n\nตัวอย่าง:\nสวัสดีครับ นี่คือการทดสอบระบบแปลงข้อความเป็นเสียงพูดภาษาไทย")
+        self.text_input.setMinimumHeight(200)
+        text_group_layout.addWidget(self.text_input)
+        
+        # Text controls
+        text_controls = QHBoxLayout()
+        clear_btn = QPushButton("🗑️ Clear")
+        char_count_label = QLabel("Characters: 0/5000")
+        char_count_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        text_controls.addWidget(clear_btn)
+        text_controls.addStretch()
+        text_controls.addWidget(char_count_label)
+        text_group_layout.addLayout(text_controls)
+        
+        self.char_count_label = char_count_label
+        
+        text_layout.addWidget(text_group)
+        tab_widget.addTab(text_tab, "✏️ ข้อความ")
+
+        layout.addWidget(tab_widget)
+
+        # Voice selection group
+        voice_group = QGroupBox("🎭 เลือกเสียง")
+        voice_layout = QVBoxLayout(voice_group)
+        
+        voice_selection_layout = QHBoxLayout()
+        voice_label = QLabel("Voice:")
+        self.voice_combo = QComboBox()
+        self._populate_voice_combo()
+        voice_selection_layout.addWidget(voice_label)
+        voice_selection_layout.addWidget(self.voice_combo)
+        voice_layout.addLayout(voice_selection_layout)
+        
+        layout.addWidget(voice_group)
+
+        # API Key group
+        api_group = QGroupBox("🔑 AI Studio API Key")
+        api_layout = QVBoxLayout(api_group)
+        
+        api_input_layout = QHBoxLayout()
+        self.api_input = QLineEdit()
+        self.api_input.setPlaceholderText("ใส่ AI Studio API Key...")
+        self.api_input.setEchoMode(QLineEdit.EchoMode.Password)
+        validate_btn = QPushButton("✅ Validate")
+        api_input_layout.addWidget(self.api_input)
+        api_input_layout.addWidget(validate_btn)
+        api_layout.addLayout(api_input_layout)
+        
+        layout.addWidget(api_group)
+
+        # Generate button
+        self.generate_btn = QPushButton("🎙️ Generate Speech with AI Studio TTS")
+        self.generate_btn.setMinimumHeight(50)
+        layout.addWidget(self.generate_btn)
+
+        # Status label
+        self.status_label = QLabel("พร้อมใช้งาน - เลือกข้อความและเสียง แล้วกด Generate")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.status_label)
+
+        # Connect signals
+        browse_btn.clicked.connect(self._browse_file)
+        preview_btn.clicked.connect(self._preview_text)
+        clear_btn.clicked.connect(lambda: self.text_input.clear())
+        validate_btn.clicked.connect(self._validate_api)
+        self.generate_btn.clicked.connect(self._generate_speech)
+        self.text_input.textChanged.connect(self._update_char_count)
+
+        # Initial state
+        self.generate_btn.setEnabled(False)
+
+        return panel
+
+    def _create_history_panel(self):
+        """Create the right panel with history table"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+
+        # Title
+        title = QLabel("📋 ประวัติการสร้างเสียง")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px;")
+        layout.addWidget(title)
+
+        # History table
+        self.history_table = QTableWidget()
+        self.history_table.setColumnCount(4)
+        self.history_table.setHorizontalHeaderLabels(["#", "เวลา", "เสียง", "💿"])
+        
+        # Set column widths
+        header = self.history_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        
+        self.history_table.setColumnWidth(0, 40)   # #
+        self.history_table.setColumnWidth(2, 80)   # Voice
+        self.history_table.setColumnWidth(3, 60)   # Download
+        
+        layout.addWidget(self.history_table)
+
+        # Clear history button
+        clear_history_btn = QPushButton("🗑️ Clear History")
+        layout.addWidget(clear_history_btn)
+        clear_history_btn.clicked.connect(self._clear_history)
+
+        return panel
+
+    def _update_char_count(self):
+        """Update character count label"""
+        text = self.text_input.toPlainText()
+        char_count = len(text)
+        self.char_count_label.setText(f"Characters: {char_count}/5000")
+        
+        if char_count > 5000:
+            self.char_count_label.setStyleSheet("color: #FF0000; font-weight: bold;")
+        else:
+            self.char_count_label.setStyleSheet("color: #FFFFFF;")
+
+    def _populate_voice_combo(self):
+        """Populate the voice combo box with organized voice options"""
+        # Add default selection
+        self.voice_combo.addItem("🎤 เลือกเสียง (Select Voice)", "")
+        
+        # Add voices by category
+        for category, voices in self.voice_options.items():
+            # Add category separator
+            self.voice_combo.addItem(f"── {category} ──", "")
+            
+            # Add voices in this category
+            for voice_name, description in voices.items():
+                display_text = f"   {voice_name} - {description}"
+                self.voice_combo.addItem(display_text, voice_name)
+
+        # Set default to Kore (good for Thai)
+        kore_index = self.voice_combo.findData("Kore")
+        if kore_index != -1:
+            self.voice_combo.setCurrentIndex(kore_index)
+
+    def _get_selected_voice(self):
+        """Get the currently selected voice name"""
+        voice_data = self.voice_combo.currentData()
+        return voice_data if voice_data else "Kore"  # Default to Kore
+
+    def _get_text_content(self):
+        """Get text content from either file or direct input"""
+        # Check if there's text in the direct input
+        direct_text = self.text_input.toPlainText().strip()
+        if direct_text:
+            return direct_text
+        
+        # Otherwise try to get from file
+        file_path = self.file_path.text().strip()
+        if file_path and os.path.exists(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as file:
+                    return file.read().strip()
+            except Exception as e:
+                return None
+        
+        return None
+
+    def _validate_api(self):
+        api_key = self.api_input.text().strip()
+        if not api_key:
+            QMessageBox.warning(self, "Error", "Please enter an API key")
+            return
+
+        try:
+            # Test API key with a simple request using the correct endpoint
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            headers = {
+                "Content-Type": "application/json"
+            }
+            params = {
+                "key": api_key
+            }
+            data = {
+                "contents": [{
+                    "parts":[{
+                        "text": "Say hello in Thai"
+                    }]
+                }]
+            }
+            
+            response = requests.post(url, headers=headers, params=params, json=data)
+            
+            if response.status_code == 200:
+                self.api_key = api_key
+                self.generate_btn.setEnabled(True)
+                self.status_label.setText("✅ API Key ถูกต้อง - พร้อมสร้างเสียง")
+                self.status_label.setStyleSheet("color: #00FF00")
+                QMessageBox.information(self, "Success", "AI Studio API key is valid!")
+            else:
+                raise Exception(f"API Error: {response.status_code} - {response.text}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Invalid API key: {str(e)}")
+
+    def _generate_speech(self):
+        if not self.api_key:
+            QMessageBox.warning(self, "Error", "Please enter and validate API key first")
+            return
+
+        # Get text content
+        text = self._get_text_content()
+        if not text:
+            QMessageBox.warning(self, "Error", "Please enter text or select a text file")
+            return
+
+        selected_voice = self._get_selected_voice()
+        if not selected_voice:
+            QMessageBox.warning(self, "Error", "Please select a voice")
+            return
+
+        try:
+            # Limit text length for API
+            if len(text) > 5000:
+                text = text[:5000]
+                QMessageBox.information(self, "Info", "Text was truncated to 5000 characters for TTS processing")
+
+            # Update UI state
+            self.status_label.setText(f"🔄 กำลังสร้างเสียงด้วย AI Studio TTS (Voice: {selected_voice})...")
+            self.status_label.setStyleSheet("color: #FFA500")  # Orange color
+            self.generate_btn.setEnabled(False)
+            QApplication.processEvents()
+
+            # Use AI Studio TTS API (Gemini 2.5 TTS)
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent"
+            headers = {
+                "Content-Type": "application/json"
+            }
+            params = {
+                "key": self.api_key
+            }
+            
+            # Prepare TTS request data with selected voice
+            data = {
+                "contents": [{
+                    "parts": [{
+                        "text": text
+                    }]
+                }],
+                "generationConfig": {
+                    "responseModalities": ["AUDIO"],
+                    "speechConfig": {
+                        "voiceConfig": {
+                            "prebuiltVoiceConfig": {
+                                "voiceName": selected_voice
+                            }
+                        }
+                    }
+                }
+            }
+            
+            # Make TTS request
+            response = requests.post(url, headers=headers, params=params, json=data, timeout=60)
+            
+            if response.status_code == 200:
+                response_data = response.json()
+                
+                # Extract audio data from response
+                if ('candidates' in response_data and 
+                    len(response_data['candidates']) > 0 and
+                    'content' in response_data['candidates'][0] and
+                    'parts' in response_data['candidates'][0]['content'] and
+                    len(response_data['candidates'][0]['content']['parts']) > 0):
+                    
+                    part = response_data['candidates'][0]['content']['parts'][0]
+                    
+                    if 'inlineData' in part and 'data' in part['inlineData']:
+                        # Decode base64 audio data
+                        audio_base64 = part['inlineData']['data']
+                        self.audio_data = base64.b64decode(audio_base64)
+                        
+                        if len(self.audio_data) > 1000:  # Check if we have substantial audio data
+                            # Generate filename
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            self.current_filename = f"speech_{selected_voice}_{timestamp}.wav"
+                            
+                            # Add to history
+                            self._add_to_history(selected_voice, text[:50] + "..." if len(text) > 50 else text)
+                            
+                            self.status_label.setText(f"✅ สร้างเสียงสำเร็จ! (Voice: {selected_voice})")
+                            self.status_label.setStyleSheet("color: #00FF00")  # Green color
+                        else:
+                            raise Exception("Generated audio data is too small")
+                    else:
+                        raise Exception("No audio data found in API response")
+                else:
+                    raise Exception("Invalid response format from AI Studio TTS API")
+            else:
+                error_msg = f"AI Studio TTS API Error: {response.status_code}"
+                if response.text:
+                    try:
+                        error_data = response.json()
+                        if 'error' in error_data and 'message' in error_data['error']:
+                            error_msg += f" - {error_data['error']['message']}"
+                    except:
+                        error_msg += f" - {response.text[:200]}"
+                raise Exception(error_msg)
+
+        except Exception as e:
+            self.status_label.setText(f"❌ Error: {str(e)}")
+            self.status_label.setStyleSheet("color: #FF0000")  # Red color
+            QMessageBox.critical(self, "Error", f"Failed to generate speech: {str(e)}")
+        finally:
+            self.generate_btn.setEnabled(True)
+
+    def _add_to_history(self, voice, text_preview):
+        """Add generated speech to history"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        
+        history_item = {
+            'timestamp': timestamp,
+            'voice': voice,
+            'text_preview': text_preview,
+            'audio_data': self.audio_data,
+            'filename': self.current_filename
+        }
+        
+        self.speech_history.append(history_item)
+        self._update_history_table()
+
+    def _update_history_table(self):
+        """Update the history table with current history"""
+        self.history_table.setRowCount(len(self.speech_history))
+        
+        for i, item in enumerate(self.speech_history):
+            # Row number
+            self.history_table.setItem(i, 0, QTableWidgetItem(str(i + 1)))
+            
+            # Timestamp
+            self.history_table.setItem(i, 1, QTableWidgetItem(item['timestamp']))
+            
+            # Voice
+            self.history_table.setItem(i, 2, QTableWidgetItem(item['voice']))
+            
+            # Download button
+            download_btn = QPushButton("💿")
+            download_btn.setToolTip("Save Audio File")
+            download_btn.setMaximumWidth(50)
+            download_btn.clicked.connect(lambda checked, idx=i: self._download_from_history(idx))
+            self.history_table.setCellWidget(i, 3, download_btn)
+
+    def _download_from_history(self, index):
+        """Download audio file from history"""
+        if index < len(self.speech_history):
+            item = self.speech_history[index]
+            
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Audio File",
+                item['filename'],
+                "WAV Files (*.wav);;MP3 Files (*.mp3);;All Files (*)"
+            )
+            
+            if file_path:
+                try:
+                    # Create a proper WAV file with PCM data
+                    import wave
+                    
+                    # Write WAV file with proper headers
+                    with wave.open(file_path, 'wb') as wav_file:
+                        wav_file.setnchannels(1)  # Mono
+                        wav_file.setsampwidth(2)  # 16-bit
+                        wav_file.setframerate(24000)  # 24kHz sample rate
+                        wav_file.writeframes(item['audio_data'])
+                    
+                    self.status_label.setText(f"💿 Audio saved successfully: {file_path}")
+                    self.status_label.setStyleSheet("color: #00FF00")  # Green color
+                    QMessageBox.information(self, "Success", f"Audio saved to: {file_path}")
+                except Exception as e:
+                    self.status_label.setText(f"❌ Error saving audio: {str(e)}")
+                    self.status_label.setStyleSheet("color: #FF0000")  # Red color
+                    QMessageBox.critical(self, "Error", f"Failed to save audio: {str(e)}")
+
+    def _clear_history(self):
+        """Clear all history"""
+        reply = QMessageBox.question(self, "Clear History", 
+                                   "Are you sure you want to clear all history?",
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.speech_history.clear()
+            self._update_history_table()
+            self.status_label.setText("🗑️ History cleared")
+            self.status_label.setStyleSheet("color: #FFA500")
+
+    def _browse_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Text File",
+            "",
+            "Text Files (*.txt);;All Files (*)"
+        )
+        if file_path:
+            self.file_path.setText(file_path)
+
+    def _preview_text(self):
+        file_path = self.file_path.text()
+        if not file_path:
+            QMessageBox.warning(self, "Error", "Please select a text file first")
+            return
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                text = file.read()
+            
+            # Show preview dialog
+            preview_text = text[:500] + "..." if len(text) > 500 else text
+            QMessageBox.information(self, "Text Preview", preview_text)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to read file: {str(e)}")
+
+    def _applyStyle(self):
+        # Dark theme with larger fonts
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #2b2b2b;
+                color: #ffffff;
+            }
+            QWidget {
+                background-color: #2b2b2b;
+                color: #ffffff;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 13px;
+            }
+            QGroupBox {
+                font-size: 14px;
+                font-weight: bold;
+                border: 2px solid #555555;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 8px 0 8px;
+            }
+            QLineEdit {
+                background-color: #3c3c3c;
+                border: 2px solid #555555;
+                border-radius: 6px;
+                padding: 10px;
+                color: #ffffff;
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                border-color: #0078d4;
+            }
+            QTextEdit {
+                background-color: #3c3c3c;
+                border: 2px solid #555555;
+                border-radius: 6px;
+                padding: 10px;
+                color: #ffffff;
+                font-size: 13px;
+            }
+            QTextEdit:focus {
+                border-color: #0078d4;
+            }
+            QComboBox {
+                background-color: #3c3c3c;
+                border: 2px solid #555555;
+                border-radius: 6px;
+                padding: 10px;
+                color: #ffffff;
+                min-height: 25px;
+                font-size: 13px;
+            }
+            QComboBox:focus {
+                border-color: #0078d4;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 25px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 6px solid transparent;
+                border-right: 6px solid transparent;
+                border-top: 6px solid #ffffff;
+                margin-right: 8px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #3c3c3c;
+                border: 1px solid #555555;
+                selection-background-color: #0078d4;
+                color: #ffffff;
+                font-size: 13px;
+            }
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 12px 18px;
+                font-weight: bold;
+                min-width: 120px;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
+            QPushButton:disabled {
+                background-color: #555555;
+                color: #999999;
+            }
+            QLabel {
+                color: #ffffff;
+                padding: 6px;
+                font-size: 13px;
+            }
+            QTableWidget {
+                background-color: #3c3c3c;
+                border: 2px solid #555555;
+                border-radius: 6px;
+                gridline-color: #555555;
+                font-size: 12px;
+            }
+            QTableWidget::item {
+                padding: 8px;
+                border-bottom: 1px solid #555555;
+            }
+            QTableWidget::item:selected {
+                background-color: #0078d4;
+            }
+            QHeaderView::section {
+                background-color: #404040;
+                color: #ffffff;
+                padding: 8px;
+                border: 1px solid #555555;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QTabWidget::pane {
+                border: 2px solid #555555;
+                border-radius: 6px;
+                background-color: #2b2b2b;
+            }
+            QTabWidget::tab-bar {
+                alignment: center;
+            }
+            QTabBar::tab {
+                background-color: #404040;
+                color: #ffffff;
+                padding: 10px 20px;
+                margin-right: 2px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                font-size: 13px;
+            }
+            QTabBar::tab:selected {
+                background-color: #0078d4;
+            }
+            QTabBar::tab:hover {
+                background-color: #555555;
+            }
+            QSplitter::handle {
+                background-color: #555555;
+                width: 3px;
+            }
+        """)
+
+def main():
+    app = QApplication(sys.argv)
+    
+    # Set application font
+    font = QFont("Segoe UI", 10)
+    app.setFont(font)
+    
+    window = TextToSpeechApp()
+    window.show()
+    sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()
